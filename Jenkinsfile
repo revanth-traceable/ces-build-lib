@@ -1,5 +1,5 @@
 #!groovy
-/* library(identifier: 'ces-build-lib@snapshot', retriever: legacySCM(scm))
+/* library('ces-build-lib@snapshot')
 */
 
 node('docker') {
