@@ -1,0 +1,97 @@
+#!groovy
+
+node('docker') {
+
+    properties([
+        buildDiscarder(logRotator(numToKeepStr: '10')),
+        disableConcurrentBuilds()
+    ])
+
+    def cesBuildLib = libraryFromLocalRepo().com.cloudogu.ces.cesbuildlib
+    def git = cesBuildLib.Git.new(this)
+
+    String projectVersion = ""
+    String dockerImageName = "ces-build-lib"
+    String dockerImageTag = ""
+
+    catchError {
+        stage('Checkout') {
+            checkout scm
+            git.clean('".*/"')
+            
+            def mvn = cesBuildLib.MavenWrapperInDocker.new(this, 'eclipse-temurin:11.0.25_9-jdk-alpine')
+            mvn.useLocalRepoFromJenkins = true
+            
+            projectVersion = mvn.getVersion()
+            dockerImageTag = "${projectVersion}-${env.BUILD_NUMBER}"
+            
+            currentBuild.description = "v${projectVersion} | Build #${env.BUILD_NUMBER}"
+            
+            echo "Building version: ${projectVersion}"
+            echo "Docker tag: ${dockerImageTag}"
+            echo "Branch: ${env.BRANCH_NAME}"
+            echo "Is Pull Request: ${isPullRequest()}"
+        }
+
+        buildMavenProject(
+            cesBuildLib: cesBuildLib,
+            jdkImage: 'eclipse-temurin:11.0.25_9-jdk-alpine',
+            skipTests: false,
+            generateCoverage: true
+        )
+
+        stage('Docker Build') {
+            def additionalTags = ["${env.BRANCH_NAME}-latest"]
+            
+            if ("master".equals(env.BRANCH_NAME)) {
+                additionalTags.add("latest")
+            }
+            
+            buildDockerImage(
+                imageName: dockerImageName,
+                imageTag: dockerImageTag,
+                buildContext: '.',
+                additionalTags: additionalTags
+            )
+        }
+
+        stage('Trivy Security Scan') {
+            scanDockerImageWithTrivy(
+                imageName: dockerImageName,
+                imageTag: dockerImageTag,
+                severityLevels: [
+                    cesBuildLib.TrivySeverityLevel.CRITICAL,
+                    cesBuildLib.TrivySeverityLevel.HIGH_OR_CRITICAL
+                ],
+                strategy: cesBuildLib.TrivyScanStrategy.UNSTABLE,
+                trivyVersion: '0.57.1'
+            )
+        }
+
+        stage('SonarQube Analysis') {
+            runSonarQubeAnalysis(
+                cesBuildLib: cesBuildLib,
+                sonarServer: 'ces-sonar',
+                jdkImage: 'eclipse-temurin:17.0.14_7-jdk-alpine',
+                githubToken: 'sonarqube-gh-token'
+            )
+        }
+
+        stage('Build Summary') {
+            echo "=== Build Summary ==="
+            echo "Project Version: ${projectVersion}"
+            echo "Docker Image: ${dockerImageName}:${dockerImageTag}"
+            echo "Docker Image: ${dockerImageName}:${env.BRANCH_NAME}-latest"
+            if ("master".equals(env.BRANCH_NAME)) {
+                echo "Docker Image: ${dockerImageName}:latest"
+            }
+            echo "Branch: ${env.BRANCH_NAME}"
+            echo "Build Status: ${currentBuild.currentResult}"
+            echo "===================="
+        }
+    }
+}
+
+def libraryFromLocalRepo() {
+    library(identifier: 'ces-build-lib@snapshot', retriever: legacySCM(scm))
+}
