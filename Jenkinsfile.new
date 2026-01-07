@@ -6,7 +6,7 @@ node('docker') {
         buildDiscarder(logRotator(numToKeepStr: '10')),
         disableConcurrentBuilds(),
         parameters([
-            string(name: 'DOCKER_USERNAME', defaultValue: 'revanth', description: 'Docker Hub username (image will be {username}/{imagename})'),
+            string(name: 'DOCKER_USERNAME', defaultValue: 'revanthharness', description: 'Docker Hub username (image will be {username}/{imagename})'),
             string(name: 'DOCKER_REGISTRY_URL', defaultValue: 'https://registry.hub.docker.com', description: 'Docker registry URL'),
             string(name: 'DOCKER_CREDENTIALS_ID', defaultValue: 'revanth-docker-hub-credentials', description: 'Jenkins credentials ID for Docker registry'),
             booleanParam(name: 'PUSH_DOCKER_IMAGE', defaultValue: true, description: 'Push Docker image to registry')
@@ -71,25 +71,28 @@ node('docker') {
             )
         }
 
-        stage('Trivy Security Scan') {
-            scanDockerImageWithTrivy(
-                imageName: dockerImageName,
-                imageTag: dockerImageTag,
-                severityLevels: [
-                    cesBuildLib.TrivySeverityLevel.CRITICAL,
-                    cesBuildLib.TrivySeverityLevel.HIGH_OR_CRITICAL
-                ],
-                strategy: cesBuildLib.TrivyScanStrategy.UNSTABLE,
-                trivyVersion: '0.57.1'
-            )
-        }
-
-        stage('SonarQube Analysis') {
-            runSonarQubeAnalysis(
-                cesBuildLib: cesBuildLib,
-                sonarServer: 'ces-sonar',
-                jdkImage: 'eclipse-temurin:17.0.14_7-jdk-alpine',
-                githubToken: 'sonarqube-gh-token'
+        stage('Security & Quality Analysis') {
+            parallel(
+                'Trivy Security Scan': {
+                    scanDockerImageWithTrivy(
+                        imageName: dockerImageName,
+                        imageTag: dockerImageTag,
+                        severityLevels: [
+                            cesBuildLib.TrivySeverityLevel.CRITICAL,
+                            cesBuildLib.TrivySeverityLevel.HIGH_AND_ABOVE
+                        ],
+                        strategy: cesBuildLib.TrivyScanStrategy.UNSTABLE,
+                        trivyVersion: '0.57.1'
+                    )
+                },
+                'SonarQube Analysis': {
+                    runSonarQubeAnalysis(
+                        cesBuildLib: cesBuildLib,
+                        sonarServer: 'ces-sonar',
+                        jdkImage: 'eclipse-temurin:17.0.14_7-jdk-alpine',
+                        githubToken: 'sonarqube-gh-token'
+                    )
+                }
             )
         }
 
