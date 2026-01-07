@@ -1,5 +1,5 @@
 #!groovy
-/* @Library('dummy@main')
+/* @Library('ces-build-lib@snapshot')
 */
 
 node('docker') {
