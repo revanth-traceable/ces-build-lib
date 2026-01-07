@@ -6,6 +6,7 @@ node('docker') {
         buildDiscarder(logRotator(numToKeepStr: '10')),
         disableConcurrentBuilds(),
         parameters([
+            string(name: 'DOCKER_USERNAME', defaultValue: 'revanth', description: 'Docker Hub username (image will be {username}/{imagename})'),
             string(name: 'DOCKER_REGISTRY_URL', defaultValue: 'https://registry.hub.docker.com', description: 'Docker registry URL'),
             string(name: 'DOCKER_CREDENTIALS_ID', defaultValue: 'revanth-docker-hub-credentials', description: 'Jenkins credentials ID for Docker registry'),
             booleanParam(name: 'PUSH_DOCKER_IMAGE', defaultValue: true, description: 'Push Docker image to registry')
@@ -16,7 +17,8 @@ node('docker') {
     def git = cesBuildLib.Git.new(this)
 
     String projectVersion = ""
-    String dockerImageName = "ces-build-lib"
+    String dockerImageBaseName = "ces-build-lib"
+    String dockerImageName = params.DOCKER_USERNAME ? "${params.DOCKER_USERNAME}/${dockerImageBaseName}" : dockerImageBaseName
     String dockerImageTag = ""
 
     catchError {

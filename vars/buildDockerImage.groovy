@@ -19,16 +19,18 @@ def call(Map config) {
     echo "Docker image built successfully: ${imageName}:${imageTag}"
     
     additionalTags.each { tag ->
-        echo "Tagging image as: ${imageName}:${tag}"
-        dockerImage.tag("${imageName}:${tag}")
+        echo "Tagging image as: ${tag}"
+        dockerImage.tag(tag)
     }
     
     if (pushImage && registryUrl && registryCredentials) {
         echo "Pushing Docker image to registry: ${registryUrl}"
         docker.withRegistry(registryUrl, registryCredentials) {
-            dockerImage.push()
+            echo "Pushing primary tag: ${imageTag}"
+            dockerImage.push(imageTag)
+            
             additionalTags.each { tag ->
-                echo "Pushing tag: ${imageName}:${tag}"
+                echo "Pushing additional tag: ${tag}"
                 dockerImage.push(tag)
             }
         }
