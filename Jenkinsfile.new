@@ -4,7 +4,12 @@ node('docker') {
 
     properties([
         buildDiscarder(logRotator(numToKeepStr: '10')),
-        disableConcurrentBuilds()
+        disableConcurrentBuilds(),
+        parameters([
+            string(name: 'DOCKER_REGISTRY_URL', defaultValue: 'https://registry.hub.docker.com', description: 'Docker registry URL'),
+            string(name: 'DOCKER_CREDENTIALS_ID', defaultValue: 'revanth-docker-hub-credentials', description: 'Jenkins credentials ID for Docker registry'),
+            booleanParam(name: 'PUSH_DOCKER_IMAGE', defaultValue: true, description: 'Push Docker image to registry')
+        ])
     ])
 
     def cesBuildLib = libraryFromLocalRepo().com.cloudogu.ces.cesbuildlib
@@ -40,7 +45,7 @@ node('docker') {
             generateCoverage: true
         )
 
-        stage('Docker Build') {
+        stage('Docker Build & Push') {
             def additionalTags = ["${env.BRANCH_NAME}-latest"]
             
             if ("master".equals(env.BRANCH_NAME)) {
@@ -51,7 +56,10 @@ node('docker') {
                 imageName: dockerImageName,
                 imageTag: dockerImageTag,
                 buildContext: '.',
-                additionalTags: additionalTags
+                additionalTags: additionalTags,
+                pushImage: params.PUSH_DOCKER_IMAGE,
+                registryUrl: params.DOCKER_REGISTRY_URL,
+                registryCredentials: params.DOCKER_CREDENTIALS_ID
             )
         }
 
