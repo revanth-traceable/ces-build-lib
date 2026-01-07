@@ -46,9 +46,15 @@ node('docker') {
         )
 
         stage('Docker Build & Push') {
-            def additionalTags = ["${env.BRANCH_NAME}-latest"]
+            def additionalTags = []
             
-            if ("master".equals(env.BRANCH_NAME)) {
+            if (env.BRANCH_NAME) {
+                additionalTags.add("${env.BRANCH_NAME}-latest")
+                
+                if ("master".equals(env.BRANCH_NAME)) {
+                    additionalTags.add("latest")
+                }
+            } else {
                 additionalTags.add("latest")
             }
             
