@@ -6,7 +6,6 @@ package com.cloudogu.ces.cesbuildlib
  * Example usage:
  * <pre>
  *     runCodeQualityChecks(
- *         cesBuildLib: cesBuildLib,
  *         maven: mvn,
  *         runCheckstyle: true,
  *         runPmd: true,
@@ -16,7 +15,6 @@ package com.cloudogu.ces.cesbuildlib
  * </pre>
  *
  * @param config Map containing:
- *   - cesBuildLib: (required) The ces-build-lib instance
  *   - maven: (required) Maven instance for running analysis
  *   - runCheckstyle: Run Checkstyle analysis (default: true)
  *   - runPmd: Run PMD analysis (default: true)
@@ -31,12 +29,7 @@ package com.cloudogu.ces.cesbuildlib
  * @return CodeQuality.OverallResult object
  */
 def call(Map config = [:]) {
-    def cesBuildLib = config.cesBuildLib
     def maven = config.maven
-
-    if (!cesBuildLib) {
-        error "cesBuildLib is required"
-    }
 
     if (!maven) {
         error "maven instance is required"
@@ -53,7 +46,7 @@ def call(Map config = [:]) {
     echo "SpotBugs: ${runSpotbugs}"
     echo "Parallel execution: ${runParallel}"
 
-    def codeQuality = new cesBuildLib.CodeQuality(this, maven)
+    def codeQuality = new CodeQuality(this, maven)
 
     // Configure tools if custom settings provided
     if (config.checkstyleConfig || config.checkstyleVersion) {

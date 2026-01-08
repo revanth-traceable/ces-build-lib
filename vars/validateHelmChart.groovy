@@ -6,7 +6,6 @@ package com.cloudogu.ces.cesbuildlib
  * Example usage:
  * <pre>
  *     validateHelmChart(
- *         cesBuildLib: cesBuildLib,
  *         chartDir: 'charts/myapp',
  *         valuesFile: 'values-ci.yaml',
  *         strict: true
@@ -14,7 +13,6 @@ package com.cloudogu.ces.cesbuildlib
  * </pre>
  *
  * @param config Map containing:
- *   - cesBuildLib: (required) The ces-build-lib instance
  *   - chartDir: Path to Helm chart directory (default: '.')
  *   - valuesFile: Values file for validation (optional)
  *   - strict: Enable strict linting (default: true)
@@ -29,12 +27,6 @@ package com.cloudogu.ces.cesbuildlib
  * @return boolean - true if all validations pass
  */
 def call(Map config = [:]) {
-    def cesBuildLib = config.cesBuildLib
-
-    if (!cesBuildLib) {
-        error "cesBuildLib is required"
-    }
-
     String chartDir = config.chartDir ?: '.'
     String valuesFile = config.valuesFile
     boolean strict = config.strict != false
@@ -45,7 +37,7 @@ def call(Map config = [:]) {
     boolean runTemplate = config.runTemplate != false
     boolean runValidate = config.runValidate != false
     boolean packageChart = config.packageChart ?: false
-    String helmVersion = config.helmVersion ?: cesBuildLib.Helm.DEFAULT_HELM_VERSION
+    String helmVersion = config.helmVersion ?: Helm.DEFAULT_HELM_VERSION
 
     // Check if chart directory exists
     if (!fileExists("${chartDir}/Chart.yaml")) {
@@ -59,7 +51,7 @@ def call(Map config = [:]) {
     echo "Strict mode: ${strict}"
     echo "Kubernetes version: ${kubernetesVersion}"
 
-    def helm = new cesBuildLib.Helm(this, helmVersion)
+    def helm = new Helm(this, helmVersion)
         .withChartDir(chartDir)
         .withNamespace(namespace)
         .withKubernetesVersion(kubernetesVersion)

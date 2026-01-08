@@ -6,7 +6,6 @@ package com.cloudogu.ces.cesbuildlib
  * Example usage:
  * <pre>
  *     scanWithGitleaks(
- *         cesBuildLib: cesBuildLib,
  *         scanPath: '.',
  *         scanFullHistory: true,
  *         strategy: 'FAIL'
@@ -14,7 +13,6 @@ package com.cloudogu.ces.cesbuildlib
  * </pre>
  *
  * @param config Map containing:
- *   - cesBuildLib: (required) The ces-build-lib instance
  *   - scanPath: Path to scan (default: '.')
  *   - scanMode: 'detect' (git history), 'protect' (current files), or 'files' (non-git) (default: 'detect')
  *   - scanFullHistory: Scan full git history (default: true)
@@ -29,22 +27,16 @@ package com.cloudogu.ces.cesbuildlib
  * @return Gitleaks.ScanResult object
  */
 def call(Map config = [:]) {
-    def cesBuildLib = config.cesBuildLib
-
-    if (!cesBuildLib) {
-        error "cesBuildLib is required"
-    }
-
     String scanPath = config.scanPath ?: '.'
     String scanMode = config.scanMode ?: 'detect'
     boolean scanFullHistory = config.scanFullHistory != false
     String commitRange = config.commitRange
-    String strategy = config.strategy ?: cesBuildLib.GitleaksScanStrategy.FAIL
+    String strategy = config.strategy ?: GitleaksScanStrategy.FAIL
     String configFile = config.configFile
     String baselineFile = config.baselineFile
     String reportFormat = config.reportFormat ?: 'json'
     String reportDir = config.reportDir ?: 'gitleaks-report'
-    String version = config.version ?: cesBuildLib.Gitleaks.DEFAULT_GITLEAKS_VERSION
+    String version = config.version ?: Gitleaks.DEFAULT_GITLEAKS_VERSION
     String additionalArgs = config.additionalArgs ?: ''
 
     echo "=== Gitleaks Secret Detection ==="
@@ -53,7 +45,7 @@ def call(Map config = [:]) {
     echo "Scan full history: ${scanFullHistory}"
     echo "Strategy: ${strategy}"
 
-    def gitleaks = new cesBuildLib.Gitleaks(this, version)
+    def gitleaks = new Gitleaks(this, version)
         .withStrategy(strategy)
         .withReportFormat(reportFormat)
         .withReportDir(reportDir)

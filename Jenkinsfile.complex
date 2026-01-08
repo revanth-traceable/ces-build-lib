@@ -1,0 +1,408 @@
+#!groovy
+/**
+ * Complex CI Pipeline demonstrating comprehensive use of ces-build-lib.
+ *
+ * This pipeline includes:
+ * - Multi-language support (Java/Maven + NPM frontend)
+ * - Parallel execution stages
+ * - Security scanning (Trivy, Gitleaks, OWASP Dependency-Check)
+ * - Code quality analysis (Checkstyle, PMD, SpotBugs)
+ * - SonarQube integration
+ * - Helm chart validation
+ * - Docker build and push
+ */
+
+node('docker') {
+
+    properties([
+        buildDiscarder(logRotator(numToKeepStr: '10')),
+        disableConcurrentBuilds(),
+        parameters([
+            string(name: 'DOCKER_USERNAME', defaultValue: 'revanthharness', description: 'Docker Hub username'),
+            string(name: 'DOCKER_REGISTRY_URL', defaultValue: 'https://registry.hub.docker.com', description: 'Docker registry URL'),
+            string(name: 'DOCKER_CREDENTIALS_ID', defaultValue: 'revanth-docker-hub-credentials', description: 'Jenkins credentials ID for Docker registry'),
+            booleanParam(name: 'PUSH_DOCKER_IMAGE', defaultValue: true, description: 'Push Docker image to registry'),
+            booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip all tests'),
+            booleanParam(name: 'SKIP_SECURITY_SCANS', defaultValue: false, description: 'Skip security scans'),
+            booleanParam(name: 'SKIP_CODE_QUALITY', defaultValue: false, description: 'Skip code quality checks'),
+            choice(name: 'SECURITY_SCAN_STRATEGY', choices: ['UNSTABLE', 'FAIL', 'IGNORE'], description: 'How to handle security findings')
+        ])
+    ])
+
+    def cesBuildLib = libraryFromLocalRepo().com.cloudogu.ces.cesbuildlib
+    def git = cesBuildLib.Git.new(this)
+    def docker = cesBuildLib.Docker.new(this)
+
+    // Build configuration
+    String projectVersion = ""
+    String dockerImageBaseName = "ces-build-lib"
+    String dockerImageName = params.DOCKER_USERNAME ? "${params.DOCKER_USERNAME}/${dockerImageBaseName}" : dockerImageBaseName
+    String dockerImageTag = ""
+    String jdkImage = 'eclipse-temurin:11.0.25_9-jdk-alpine'
+    String jdk17Image = 'eclipse-temurin:17.0.14_7-jdk-alpine'
+
+    // Maven instance (initialized in Checkout stage)
+    def mvn = null
+
+    // Track build results
+    def buildResults = [
+        checkout: false,
+        codeQuality: false,
+        compile: false,
+        unitTests: false,
+        npmBuild: false,
+        securityScans: false,
+        integrationTests: false,
+        dockerBuild: false,
+        helmValidation: false,
+        sonarQube: false
+    ]
+
+    catchError {
+
+        // =====================================================================
+        // STAGE: Checkout & Initialize
+        // =====================================================================
+        stage('Checkout') {
+            checkout scm
+            git.clean('".*/"')
+
+            mvn = cesBuildLib.MavenWrapperInDocker.new(this, jdkImage)
+            mvn.useLocalRepoFromJenkins = true
+
+            projectVersion = mvn.getVersion()
+            dockerImageTag = "${projectVersion}-${env.BUILD_NUMBER}"
+
+            currentBuild.description = "v${projectVersion} | Build #${env.BUILD_NUMBER}"
+
+            echo "=========================================="
+            echo "Project: ${mvn.getArtifactId()}"
+            echo "Version: ${projectVersion}"
+            echo "Branch: ${env.BRANCH_NAME ?: 'N/A'}"
+            echo "Is Pull Request: ${isPullRequest()}"
+            echo "Docker Image: ${dockerImageName}:${dockerImageTag}"
+            echo "=========================================="
+
+            buildResults.checkout = true
+        }
+
+        // =====================================================================
+        // STAGE: Secret Detection (Early - fail fast if secrets found)
+        // =====================================================================
+        stage('Secret Detection') {
+            if (params.SKIP_SECURITY_SCANS) {
+                echo "Skipping secret detection as requested"
+            } else {
+                scanWithGitleaks(
+                    scanPath: '.',
+                    scanMode: 'detect',
+                    scanFullHistory: false,
+                    commitRange: 'HEAD~20..HEAD',
+                    strategy: params.SECURITY_SCAN_STRATEGY,
+                    reportFormat: 'json'
+                )
+            }
+        }
+
+        // =====================================================================
+        // STAGE: Static Code Analysis (Parallel - before compilation)
+        // =====================================================================
+        stage('Static Analysis') {
+            if (params.SKIP_CODE_QUALITY) {
+                echo "Skipping static code analysis as requested"
+            } else {
+                parallel(
+                    'Checkstyle': {
+                        def codeQuality = cesBuildLib.CodeQuality.new(this, mvn)
+                        codeQuality.runCheckstyle()
+                    },
+                    'PMD': {
+                        def codeQuality = cesBuildLib.CodeQuality.new(this, mvn)
+                        codeQuality.runPmd()
+                    }
+                )
+            }
+        }
+
+        // =====================================================================
+        // STAGE: Compile & Unit Tests (Parallel Maven + NPM)
+        // =====================================================================
+        stage('Build & Test') {
+            parallel(
+                'Maven Build': {
+                    stage('Maven Compile') {
+                        echo "Compiling Maven project..."
+                        mvn 'clean compile -DskipTests'
+                        buildResults.compile = true
+                    }
+
+                    stage('Maven Unit Tests') {
+                        if (params.SKIP_TESTS) {
+                            echo "Skipping unit tests as requested"
+                            buildResults.unitTests = true
+                        } else {
+                            echo "Running unit tests..."
+                            mvn 'test'
+                            junit allowEmptyResults: true,
+                                  testResults: '**/target/surefire-reports/TEST-*.xml'
+                            buildResults.unitTests = true
+                        }
+                    }
+
+                    stage('Maven Package') {
+                        echo "Packaging artifacts..."
+                        mvn 'package -DskipTests'
+                        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, allowEmptyArchive: true
+                    }
+                },
+                'NPM Build': {
+                    if (fileExists('package.json') || fileExists('frontend/package.json')) {
+                        String npmWorkDir = fileExists('package.json') ? '.' : 'frontend'
+
+                        def npmResults = runNpmBuild(
+                            workDir: npmWorkDir,
+                            nodeVersion: '20',
+                            runTests: !params.SKIP_TESTS,
+                            runLint: true,
+                            runAudit: !params.SKIP_SECURITY_SCANS,
+                            auditLevel: 'high'
+                        )
+
+                        buildResults.npmBuild = !npmResults.skipped
+                    } else {
+                        echo "No package.json found, skipping NPM build"
+                        buildResults.npmBuild = true
+                    }
+                }
+            )
+        }
+
+        // =====================================================================
+        // STAGE: Bytecode Analysis (SpotBugs - requires compiled code)
+        // =====================================================================
+        stage('SpotBugs Analysis') {
+            if (params.SKIP_CODE_QUALITY) {
+                echo "Skipping SpotBugs as requested"
+            } else {
+                def codeQuality = cesBuildLib.CodeQuality.new(this, mvn)
+                codeQuality.runSpotbugs()
+                buildResults.codeQuality = true
+            }
+        }
+
+        // =====================================================================
+        // STAGE: Coverage Report
+        // =====================================================================
+        stage('Coverage Report') {
+            if (params.SKIP_TESTS) {
+                echo "Skipping coverage report (tests were skipped)"
+            } else {
+                echo "Generating code coverage report..."
+                mvn 'org.jacoco:jacoco-maven-plugin:0.8.12:report'
+
+                publishHTML([
+                    allowMissing: true,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
+                    reportDir: 'target/site/jacoco',
+                    reportFiles: 'index.html',
+                    reportName: 'Code Coverage Report'
+                ])
+            }
+        }
+
+        // =====================================================================
+        // STAGE: Docker Build
+        // =====================================================================
+        stage('Docker Build') {
+            def additionalTags = []
+
+            if (env.BRANCH_NAME) {
+                additionalTags.add("${env.BRANCH_NAME}-latest")
+
+                if ("master".equals(env.BRANCH_NAME) || "main".equals(env.BRANCH_NAME)) {
+                    additionalTags.add("latest")
+                }
+            } else {
+                additionalTags.add("latest")
+            }
+
+            buildDockerImage(
+                imageName: dockerImageName,
+                imageTag: dockerImageTag,
+                buildContext: '.',
+                additionalTags: additionalTags,
+                pushImage: false  // Push later after security scans
+            )
+
+            buildResults.dockerBuild = true
+        }
+
+        // =====================================================================
+        // STAGE: Security Scans (Parallel)
+        // =====================================================================
+        stage('Security Scans') {
+            if (params.SKIP_SECURITY_SCANS) {
+                echo "Skipping security scans as requested"
+                buildResults.securityScans = true
+            } else {
+                parallel(
+                    'Trivy Container Scan': {
+                        scanDockerImageWithTrivy(
+                            imageName: dockerImageName,
+                            imageTag: dockerImageTag,
+                            severityLevels: [
+                                cesBuildLib.TrivySeverityLevel.CRITICAL,
+                                cesBuildLib.TrivySeverityLevel.HIGH_AND_ABOVE
+                            ],
+                            strategy: params.SECURITY_SCAN_STRATEGY == 'FAIL' ?
+                                cesBuildLib.TrivyScanStrategy.FAIL :
+                                (params.SECURITY_SCAN_STRATEGY == 'UNSTABLE' ?
+                                    cesBuildLib.TrivyScanStrategy.UNSTABLE :
+                                    cesBuildLib.TrivyScanStrategy.IGNORE),
+                            trivyVersion: '0.57.1'
+                        )
+                    },
+                    'OWASP Dependency-Check': {
+                        runDependencyCheck(
+                            scanPath: '.',
+                            projectType: 'maven',
+                            failOnCvss: params.SECURITY_SCAN_STRATEGY == 'FAIL' ? 7.0 : 11.0,
+                            warnOnCvss: 4.0
+                        )
+                    }
+                )
+                buildResults.securityScans = true
+            }
+        }
+
+        // =====================================================================
+        // STAGE: Helm Chart Validation (if charts exist)
+        // =====================================================================
+        stage('Helm Validation') {
+            def chartDirs = ['charts', 'helm', 'deploy/helm']
+            String foundChartDir = null
+
+            for (dir in chartDirs) {
+                if (fileExists("${dir}/Chart.yaml")) {
+                    foundChartDir = dir
+                    break
+                }
+            }
+
+            if (foundChartDir) {
+                validateHelmChart(
+                    chartDir: foundChartDir,
+                    strict: true,
+                    kubernetesVersion: '1.29.0',
+                    packageChart: true
+                )
+                buildResults.helmValidation = true
+            } else {
+                echo "No Helm chart found, skipping validation"
+                buildResults.helmValidation = true
+            }
+        }
+
+        // =====================================================================
+        // STAGE: Integration Tests
+        // =====================================================================
+        stage('Integration Tests') {
+            if (params.SKIP_TESTS) {
+                echo "Skipping integration tests as requested"
+                buildResults.integrationTests = true
+            } else {
+                echo "Running integration tests..."
+                mvn 'verify -DskipUnitTests -Pintegration-tests'
+                junit allowEmptyResults: true,
+                      testResults: '**/target/failsafe-reports/TEST-*.xml'
+                buildResults.integrationTests = true
+            }
+        }
+
+        // =====================================================================
+        // STAGE: SonarQube Analysis
+        // =====================================================================
+        stage('SonarQube Analysis') {
+            runSonarQubeAnalysis(
+                cesBuildLib: cesBuildLib,
+                sonarServer: 'ces-sonar',
+                jdkImage: jdk17Image,
+                githubToken: 'sonarqube-gh-token'
+            )
+            buildResults.sonarQube = true
+        }
+
+        // =====================================================================
+        // STAGE: Docker Push (after all scans pass)
+        // =====================================================================
+        stage('Docker Push') {
+            if (params.PUSH_DOCKER_IMAGE && params.DOCKER_REGISTRY_URL && params.DOCKER_CREDENTIALS_ID) {
+                echo "Pushing Docker image to registry..."
+
+                def additionalTags = []
+                if (env.BRANCH_NAME) {
+                    additionalTags.add("${env.BRANCH_NAME}-latest")
+                    if ("master".equals(env.BRANCH_NAME) || "main".equals(env.BRANCH_NAME)) {
+                        additionalTags.add("latest")
+                    }
+                } else {
+                    additionalTags.add("latest")
+                }
+
+                docker.withRegistry(params.DOCKER_REGISTRY_URL, params.DOCKER_CREDENTIALS_ID) {
+                    def image = docker.image("${dockerImageName}:${dockerImageTag}")
+
+                    echo "Pushing tag: ${dockerImageTag}"
+                    image.push(dockerImageTag)
+
+                    additionalTags.each { tag ->
+                        echo "Pushing tag: ${tag}"
+                        image.push(tag)
+                    }
+                }
+
+                echo "Docker image pushed successfully"
+            } else {
+                echo "Skipping Docker push (not enabled or missing configuration)"
+            }
+        }
+
+        // =====================================================================
+        // STAGE: Build Summary
+        // =====================================================================
+        stage('Build Summary') {
+            echo "============================================"
+            echo "            BUILD SUMMARY                   "
+            echo "============================================"
+            echo "Project: ${mvn.getArtifactId()}"
+            echo "Version: ${projectVersion}"
+            echo "Docker Image: ${dockerImageName}:${dockerImageTag}"
+            echo "Branch: ${env.BRANCH_NAME ?: 'N/A'}"
+            echo "============================================"
+            echo "Stage Results:"
+            echo "  Checkout:          ${buildResults.checkout ? 'PASSED' : 'FAILED'}"
+            echo "  Code Quality:      ${buildResults.codeQuality ? 'PASSED' : 'SKIPPED/FAILED'}"
+            echo "  Compile:           ${buildResults.compile ? 'PASSED' : 'FAILED'}"
+            echo "  Unit Tests:        ${buildResults.unitTests ? 'PASSED' : 'FAILED'}"
+            echo "  NPM Build:         ${buildResults.npmBuild ? 'PASSED' : 'SKIPPED'}"
+            echo "  Security Scans:    ${buildResults.securityScans ? 'PASSED' : 'FAILED'}"
+            echo "  Integration Tests: ${buildResults.integrationTests ? 'PASSED' : 'FAILED'}"
+            echo "  Docker Build:      ${buildResults.dockerBuild ? 'PASSED' : 'FAILED'}"
+            echo "  Helm Validation:   ${buildResults.helmValidation ? 'PASSED' : 'SKIPPED'}"
+            echo "  SonarQube:         ${buildResults.sonarQube ? 'PASSED' : 'FAILED'}"
+            echo "============================================"
+            echo "Build Status: ${currentBuild.currentResult}"
+            echo "============================================"
+        }
+    }
+
+    // Post-build actions
+    if (currentBuild.currentResult != 'SUCCESS') {
+        echo "Build failed or unstable. Check the logs for details."
+    }
+}
+
+def libraryFromLocalRepo() {
+    library(identifier: 'ces-build-lib@snapshot', retriever: legacySCM(scm))
+}

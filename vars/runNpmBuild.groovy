@@ -6,7 +6,6 @@ package com.cloudogu.ces.cesbuildlib
  * Example usage:
  * <pre>
  *     runNpmBuild(
- *         cesBuildLib: cesBuildLib,
  *         workDir: 'frontend',
  *         nodeVersion: '20',
  *         runTests: true,
@@ -15,7 +14,6 @@ package com.cloudogu.ces.cesbuildlib
  * </pre>
  *
  * @param config Map containing:
- *   - cesBuildLib: (required) The ces-build-lib instance
  *   - workDir: Working directory containing package.json (default: '.')
  *   - nodeVersion: Node.js version (default: '20')
  *   - runTests: Run npm test (default: true)
@@ -31,12 +29,6 @@ package com.cloudogu.ces.cesbuildlib
  * @return Map with results of each step
  */
 def call(Map config = [:]) {
-    def cesBuildLib = config.cesBuildLib
-
-    if (!cesBuildLib) {
-        error "cesBuildLib is required"
-    }
-
     String workDir = config.workDir ?: '.'
     String nodeVersion = config.nodeVersion ?: '20'
     boolean runTests = config.runTests != false
@@ -64,7 +56,7 @@ def call(Map config = [:]) {
     echo "Run audit: ${runAudit}"
     echo "Run build: ${runBuild}"
 
-    def npm = new cesBuildLib.Npm(this, nodeVersion)
+    def npm = new Npm(this, nodeVersion)
         .withWorkDir(workDir)
         .withCleanInstall(useCI)
         .withAudit(runAudit, auditLevel)

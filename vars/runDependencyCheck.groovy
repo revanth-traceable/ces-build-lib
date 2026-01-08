@@ -6,7 +6,6 @@ package com.cloudogu.ces.cesbuildlib
  * Example usage:
  * <pre>
  *     runDependencyCheck(
- *         cesBuildLib: cesBuildLib,
  *         scanPath: '.',
  *         failOnCvss: 7.0,
  *         warnOnCvss: 4.0,
@@ -15,7 +14,6 @@ package com.cloudogu.ces.cesbuildlib
  * </pre>
  *
  * @param config Map containing:
- *   - cesBuildLib: (required) The ces-build-lib instance
  *   - scanPath: Path to scan (default: '.')
  *   - projectType: Type of project - 'maven', 'gradle', 'npm', or 'auto' (default: 'auto')
  *   - failOnCvss: CVSS score threshold to fail build (default: 7.0)
@@ -27,19 +25,13 @@ package com.cloudogu.ces.cesbuildlib
  * @return DependencyCheck.ScanResult object
  */
 def call(Map config = [:]) {
-    def cesBuildLib = config.cesBuildLib
-
-    if (!cesBuildLib) {
-        error "cesBuildLib is required"
-    }
-
     String scanPath = config.scanPath ?: '.'
     String projectType = config.projectType ?: 'auto'
     float failOnCvss = config.failOnCvss ?: 7.0
     float warnOnCvss = config.warnOnCvss ?: 4.0
     String suppressionFile = config.suppressionFile
     String reportDir = config.reportDir ?: 'dependency-check-report'
-    String version = config.version ?: cesBuildLib.DependencyCheck.DEFAULT_DEPENDENCY_CHECK_VERSION
+    String version = config.version ?: DependencyCheck.DEFAULT_DEPENDENCY_CHECK_VERSION
     String additionalArgs = config.additionalArgs ?: ''
 
     echo "=== OWASP Dependency-Check Analysis ==="
@@ -47,7 +39,7 @@ def call(Map config = [:]) {
     echo "Project type: ${projectType}"
     echo "Fail on CVSS >= ${failOnCvss}"
 
-    def depCheck = new cesBuildLib.DependencyCheck(this, version)
+    def depCheck = new DependencyCheck(this, version)
         .withCvssThresholds(failOnCvss, warnOnCvss)
         .withReportDir(reportDir)
 
