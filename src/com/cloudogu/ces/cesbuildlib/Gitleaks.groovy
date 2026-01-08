@@ -30,11 +30,12 @@ class Gitleaks implements Serializable {
     // Strategy for handling findings
     private String strategy = GitleaksScanStrategy.FAIL
 
-    Gitleaks(script, String version = DEFAULT_GITLEAKS_VERSION, Docker docker = null) {
+    // Do not use DEFAULT_GITLEAKS_VERSION here, as it will lead to java.lang.VerifyError
+    Gitleaks(script, String version = "8.18.1", Docker docker = new Docker(script)) {
         this.script = script
         this.version = version
         this.image = DEFAULT_GITLEAKS_IMAGE
-        this.docker = docker ?: new Docker(script)
+        this.docker = docker
     }
 
     /**

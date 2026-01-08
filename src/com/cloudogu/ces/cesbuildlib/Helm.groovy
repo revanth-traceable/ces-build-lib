@@ -25,11 +25,12 @@ class Helm implements Serializable {
     private boolean enableKubeValidation = true
     private String kubernetesVersion = "1.29.0"
 
-    Helm(script, String version = DEFAULT_HELM_VERSION, Docker docker = null) {
+    // Do not use DEFAULT_HELM_VERSION here, as it will lead to java.lang.VerifyError
+    Helm(script, String version = "3.14.0", Docker docker = new Docker(script)) {
         this.script = script
         this.version = version
         this.image = DEFAULT_HELM_IMAGE
-        this.docker = docker ?: new Docker(script)
+        this.docker = docker
     }
 
     /**

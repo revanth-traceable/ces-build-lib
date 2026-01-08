@@ -26,11 +26,12 @@ class Npm implements Serializable {
     private boolean auditEnabled = true
     private String auditLevel = "high"  // low, moderate, high, critical
 
-    Npm(script, String nodeVersion = DEFAULT_NODE_VERSION, Docker docker = null) {
+    // Do not use DEFAULT_NODE_VERSION here, as it will lead to java.lang.VerifyError
+    Npm(script, String nodeVersion = "20", Docker docker = new Docker(script)) {
         this.script = script
         this.nodeVersion = nodeVersion
         this.nodeImage = DEFAULT_NODE_IMAGE
-        this.docker = docker ?: new Docker(script)
+        this.docker = docker
     }
 
     /**

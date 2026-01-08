@@ -27,11 +27,12 @@ class DependencyCheck implements Serializable {
     // Suppression file for false positives
     private String suppressionFile = null
 
-    DependencyCheck(script, String version = DEFAULT_DEPENDENCY_CHECK_VERSION, Docker docker = null) {
+    // Do not use DEFAULT_DEPENDENCY_CHECK_VERSION here, as it will lead to java.lang.VerifyError
+    DependencyCheck(script, String version = "8.4.3", Docker docker = new Docker(script)) {
         this.script = script
         this.version = version
         this.image = DEFAULT_DEPENDENCY_CHECK_IMAGE
-        this.docker = docker ?: new Docker(script)
+        this.docker = docker
     }
 
     /**
