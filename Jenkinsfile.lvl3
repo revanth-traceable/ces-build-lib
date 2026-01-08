@@ -1,4 +1,6 @@
 #!groovy
+/* @Library('ces-build-lib@snapshot')
+*/
 /**
  * Complex CI Pipeline demonstrating comprehensive use of ces-build-lib.
  *
@@ -25,7 +27,8 @@ node('docker') {
             booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip all tests'),
             booleanParam(name: 'SKIP_SECURITY_SCANS', defaultValue: false, description: 'Skip security scans'),
             booleanParam(name: 'SKIP_CODE_QUALITY', defaultValue: false, description: 'Skip code quality checks'),
-            choice(name: 'SECURITY_SCAN_STRATEGY', choices: ['UNSTABLE', 'FAIL', 'IGNORE'], description: 'How to handle security findings')
+            choice(name: 'SECURITY_SCAN_STRATEGY', choices: ['UNSTABLE', 'FAIL', 'IGNORE'], description: 'How to handle security findings'),
+            string(name: 'NVD_API_KEY_CREDENTIALS_ID', defaultValue: 'nvd-api-key', description: 'Jenkins credentials ID for NVD API key (required for OWASP Dependency-Check)')
         ])
     ])
 
@@ -60,6 +63,9 @@ node('docker') {
 
     catchError {
 
+        // =====================================================================
+        // STAGE: Checkout & Initialize
+        // =====================================================================
         stage('Checkout') {
             checkout scm
             git.clean('".*/"')
@@ -83,12 +89,14 @@ node('docker') {
             buildResults.checkout = true
         }
 
+        // =====================================================================
+        // STAGE: Secret Detection (Early - fail fast if secrets found)
+        // =====================================================================
         stage('Secret Detection') {
             if (params.SKIP_SECURITY_SCANS) {
                 echo "Skipping secret detection as requested"
             } else {
                 scanWithGitleaks(
-                    cesBuildLib: cesBuildLib,
                     scanPath: '.',
                     scanMode: 'detect',
                     scanFullHistory: false,
@@ -99,6 +107,9 @@ node('docker') {
             }
         }
 
+        // =====================================================================
+        // STAGE: Static Code Analysis (Parallel - before compilation)
+        // =====================================================================
         stage('Static Analysis') {
             if (params.SKIP_CODE_QUALITY) {
                 echo "Skipping static code analysis as requested"
@@ -116,6 +127,9 @@ node('docker') {
             }
         }
 
+        // =====================================================================
+        // STAGE: Compile & Unit Tests (Parallel Maven + NPM)
+        // =====================================================================
         stage('Build & Test') {
             parallel(
                 'Maven Build': {
@@ -149,7 +163,6 @@ node('docker') {
                         String npmWorkDir = fileExists('package.json') ? '.' : 'frontend'
 
                         def npmResults = runNpmBuild(
-                            cesBuildLib: cesBuildLib,
                             workDir: npmWorkDir,
                             nodeVersion: '20',
                             runTests: !params.SKIP_TESTS,
@@ -167,6 +180,9 @@ node('docker') {
             )
         }
 
+        // =====================================================================
+        // STAGE: Bytecode Analysis (SpotBugs - requires compiled code)
+        // =====================================================================
         stage('SpotBugs Analysis') {
             if (params.SKIP_CODE_QUALITY) {
                 echo "Skipping SpotBugs as requested"
@@ -177,6 +193,9 @@ node('docker') {
             }
         }
 
+        // =====================================================================
+        // STAGE: Coverage Report
+        // =====================================================================
         stage('Coverage Report') {
             if (params.SKIP_TESTS) {
                 echo "Skipping coverage report (tests were skipped)"
@@ -195,6 +214,9 @@ node('docker') {
             }
         }
 
+        // =====================================================================
+        // STAGE: Docker Build
+        // =====================================================================
         stage('Docker Build') {
             def additionalTags = []
 
@@ -219,6 +241,9 @@ node('docker') {
             buildResults.dockerBuild = true
         }
 
+        // =====================================================================
+        // STAGE: Security Scans (Parallel)
+        // =====================================================================
         stage('Security Scans') {
             if (params.SKIP_SECURITY_SCANS) {
                 echo "Skipping security scans as requested"
@@ -243,11 +268,11 @@ node('docker') {
                     },
                     'OWASP Dependency-Check': {
                         runDependencyCheck(
-                            cesBuildLib: cesBuildLib,
                             scanPath: '.',
                             projectType: 'maven',
                             failOnCvss: params.SECURITY_SCAN_STRATEGY == 'FAIL' ? 7.0 : 11.0,
-                            warnOnCvss: 4.0
+                            warnOnCvss: 4.0,
+                            nvdApiKeyCredentialsId: params.NVD_API_KEY_CREDENTIALS_ID
                         )
                     }
                 )
@@ -255,6 +280,9 @@ node('docker') {
             }
         }
 
+        // =====================================================================
+        // STAGE: Helm Chart Validation (if charts exist)
+        // =====================================================================
         stage('Helm Validation') {
             def chartDirs = ['charts', 'helm', 'deploy/helm']
             String foundChartDir = null
@@ -268,7 +296,6 @@ node('docker') {
 
             if (foundChartDir) {
                 validateHelmChart(
-                    cesBuildLib: cesBuildLib,
                     chartDir: foundChartDir,
                     strict: true,
                     kubernetesVersion: '1.29.0',
@@ -281,6 +308,9 @@ node('docker') {
             }
         }
 
+        // =====================================================================
+        // STAGE: Integration Tests
+        // =====================================================================
         stage('Integration Tests') {
             if (params.SKIP_TESTS) {
                 echo "Skipping integration tests as requested"
@@ -292,6 +322,19 @@ node('docker') {
                       testResults: '**/target/failsafe-reports/TEST-*.xml'
                 buildResults.integrationTests = true
             }
+        }
+
+        // =====================================================================
+        // STAGE: SonarQube Analysis
+        // =====================================================================
+        stage('SonarQube Analysis') {
+            runSonarQubeAnalysis(
+                cesBuildLib: cesBuildLib,
+                sonarServer: 'ces-sonar',
+                jdkImage: jdk17Image,
+                githubToken: 'sonarqube-gh-token'
+            )
+            buildResults.sonarQube = true
         }
 
         // =====================================================================
@@ -329,16 +372,9 @@ node('docker') {
             }
         }
 
-        stage('SonarQube Analysis') {
-            runSonarQubeAnalysis(
-                cesBuildLib: cesBuildLib,
-                sonarServer: 'ces-sonar',
-                jdkImage: jdk17Image,
-                githubToken: 'sonarqube-gh-token'
-            )
-            buildResults.sonarQube = true
-        }
-
+        // =====================================================================
+        // STAGE: Build Summary
+        // =====================================================================
         stage('Build Summary') {
             echo "============================================"
             echo "            BUILD SUMMARY                   "
