@@ -9,6 +9,7 @@ package com.cloudogu.ces.cesbuildlib
  *         scanPath: '.',
  *         failOnCvss: 7.0,
  *         warnOnCvss: 4.0,
+ *         nvdApiKeyCredentialsId: 'nvd-api-key',
  *         suppressionFile: 'dependency-check-suppression.xml'
  *     )
  * </pre>
@@ -18,6 +19,7 @@ package com.cloudogu.ces.cesbuildlib
  *   - projectType: Type of project - 'maven', 'gradle', 'npm', or 'auto' (default: 'auto')
  *   - failOnCvss: CVSS score threshold to fail build (default: 7.0)
  *   - warnOnCvss: CVSS score threshold to warn (default: 4.0)
+ *   - nvdApiKeyCredentialsId: Jenkins credentials ID for NVD API key (required since 2023)
  *   - suppressionFile: Path to suppression XML file (optional)
  *   - reportDir: Directory for reports (default: 'dependency-check-report')
  *   - version: Dependency-Check version (default: '8.4.3')
@@ -30,6 +32,7 @@ def call(Map config = [:]) {
     float failOnCvss = config.failOnCvss ?: 7.0
     float warnOnCvss = config.warnOnCvss ?: 4.0
     String suppressionFile = config.suppressionFile
+    String nvdApiKeyCredentialsId = config.nvdApiKeyCredentialsId
     String reportDir = config.reportDir ?: 'dependency-check-report'
     String version = config.version ?: DependencyCheck.DEFAULT_DEPENDENCY_CHECK_VERSION
     String additionalArgs = config.additionalArgs ?: ''
@@ -38,6 +41,7 @@ def call(Map config = [:]) {
     echo "Scan path: ${scanPath}"
     echo "Project type: ${projectType}"
     echo "Fail on CVSS >= ${failOnCvss}"
+    echo "NVD API Key configured: ${nvdApiKeyCredentialsId ? 'Yes' : 'No'}"
 
     def depCheck = new DependencyCheck(this, version)
         .withCvssThresholds(failOnCvss, warnOnCvss)
@@ -45,6 +49,10 @@ def call(Map config = [:]) {
 
     if (suppressionFile) {
         depCheck.withSuppressionFile(suppressionFile)
+    }
+
+    if (nvdApiKeyCredentialsId) {
+        depCheck.withNvdApiKey(nvdApiKeyCredentialsId)
     }
 
     def result

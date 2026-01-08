@@ -27,6 +27,10 @@ class DependencyCheck implements Serializable {
     // Suppression file for false positives
     private String suppressionFile = null
 
+    // NVD API key (required since 2023 for NVD database access)
+    // Get your free key at: https://nvd.nist.gov/developers/request-an-api-key
+    private String nvdApiKeyCredentialsId = null
+
     // Do not use DEFAULT_DEPENDENCY_CHECK_VERSION here, as it will lead to java.lang.VerifyError
     DependencyCheck(script, String version = "8.4.3", Docker docker = new Docker(script)) {
         this.script = script
@@ -64,6 +68,18 @@ class DependencyCheck implements Serializable {
      */
     DependencyCheck withReportDir(String dir) {
         this.reportDir = dir
+        return this
+    }
+
+    /**
+     * Set NVD API key credentials ID.
+     * Required since 2023 for accessing the NVD database.
+     * Get your free API key at: https://nvd.nist.gov/developers/request-an-api-key
+     *
+     * @param credentialsId Jenkins credentials ID containing the NVD API key (secret text)
+     */
+    DependencyCheck withNvdApiKey(String credentialsId) {
+        this.nvdApiKeyCredentialsId = credentialsId
         return this
     }
 
@@ -162,10 +178,23 @@ class DependencyCheck implements Serializable {
 
         script.echo "Running Dependency-Check with image: ${dockerImage}"
 
-        return docker.image(dockerImage)
-            .inside("-v ${script.env.WORKSPACE}:/src -v ${script.env.WORKSPACE}/${reportDir}:/report -v ${script.env.WORKSPACE}/${dataDir}:/data --entrypoint=''") {
-                script.sh(script: "/usr/share/dependency-check/bin/dependency-check.sh ${command}", returnStatus: true)
+        if (nvdApiKeyCredentialsId) {
+            // Run with NVD API key from Jenkins credentials
+            return script.withCredentials([script.string(credentialsId: nvdApiKeyCredentialsId, variable: 'NVD_API_KEY')]) {
+                docker.image(dockerImage)
+                    .inside("-v ${script.env.WORKSPACE}:/src -v ${script.env.WORKSPACE}/${reportDir}:/report -v ${script.env.WORKSPACE}/${dataDir}:/data -e NVD_API_KEY=${script.env.NVD_API_KEY} --entrypoint=''") {
+                        script.sh(script: "/usr/share/dependency-check/bin/dependency-check.sh ${command} --nvdApiKey ${script.env.NVD_API_KEY}", returnStatus: true)
+                    }
             }
+        } else {
+            // Run without NVD API key (will use cached data or fail if no cache exists)
+            script.echo "WARNING: No NVD API key configured. Dependency-Check may fail or use stale data."
+            script.echo "Get a free API key at: https://nvd.nist.gov/developers/request-an-api-key"
+            return docker.image(dockerImage)
+                .inside("-v ${script.env.WORKSPACE}:/src -v ${script.env.WORKSPACE}/${reportDir}:/report -v ${script.env.WORKSPACE}/${dataDir}:/data --entrypoint=''") {
+                    script.sh(script: "/usr/share/dependency-check/bin/dependency-check.sh ${command}", returnStatus: true)
+                }
+        }
     }
 
     private ScanResult processResults(Integer exitCode) {

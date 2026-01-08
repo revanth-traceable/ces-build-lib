@@ -25,7 +25,8 @@ node('docker') {
             booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip all tests'),
             booleanParam(name: 'SKIP_SECURITY_SCANS', defaultValue: false, description: 'Skip security scans'),
             booleanParam(name: 'SKIP_CODE_QUALITY', defaultValue: false, description: 'Skip code quality checks'),
-            choice(name: 'SECURITY_SCAN_STRATEGY', choices: ['UNSTABLE', 'FAIL', 'IGNORE'], description: 'How to handle security findings')
+            choice(name: 'SECURITY_SCAN_STRATEGY', choices: ['UNSTABLE', 'FAIL', 'IGNORE'], description: 'How to handle security findings'),
+            string(name: 'NVD_API_KEY_CREDENTIALS_ID', defaultValue: 'nvd-api-key', description: 'Jenkins credentials ID for NVD API key (required for OWASP Dependency-Check)')
         ])
     ])
 
@@ -268,7 +269,8 @@ node('docker') {
                             scanPath: '.',
                             projectType: 'maven',
                             failOnCvss: params.SECURITY_SCAN_STRATEGY == 'FAIL' ? 7.0 : 11.0,
-                            warnOnCvss: 4.0
+                            warnOnCvss: 4.0,
+                            nvdApiKeyCredentialsId: params.NVD_API_KEY_CREDENTIALS_ID
                         )
                     }
                 )
