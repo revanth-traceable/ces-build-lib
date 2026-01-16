@@ -33,6 +33,7 @@ node('docker') {
         stage('Checkout') {
             checkout scm
             git.clean('".*/"')
+        }
         
         stage("Prepare Build Environment") {
             echo "Preparing build environment..."
