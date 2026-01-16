@@ -1,7 +1,5 @@
 #!groovy
-@Library('github.com/cloudogu/ces-build-lib@2.2.1')
-import com.cloudogu.ces.cesbuildlib.*
-
+/* @Library('ces-build-lib@snapshot')
 /**
  * Docker Build, Copy, and Run Pipeline
  * Ready to run in any fresh Jenkins instance
@@ -24,8 +22,9 @@ node('docker') {
         ])
     ])
 
-    def git = new Git(this)
-    def docker = new Docker(this)
+    def cesBuildLib = libraryFromLocalRepo().com.cloudogu.ces.cesbuildlib
+    def git = cesBuildLib.Git.new(this)
+    def docker = cesBuildLib.Docker.new(this)
     
     def buildImage = null
     
@@ -173,4 +172,8 @@ console.log("All tests completed successfully!");
         echo "Build completed with status: ${currentBuild.currentResult}"
         echo "Check the logs above for details."
     }
+}
+
+def libraryFromLocalRepo() {
+    library(identifier: 'ces-build-lib@snapshot', retriever: legacySCM(scm))
 }
