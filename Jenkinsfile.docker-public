@@ -38,9 +38,8 @@ node('docker') {
         stage("Prepare Build Environment") {
             echo "Preparing build environment..."
             
-            // Create a sample Dockerfile if none exists
-            if (!fileExists('Dockerfile')) {
-                writeFile file: 'Dockerfile', text: """
+            // Create a demo Dockerfile for this pipeline
+            writeFile file: 'Dockerfile.demo', text: """
 FROM ${params.BASE_IMAGE}
 
 WORKDIR /app
@@ -55,8 +54,7 @@ RUN mkdir -p /app/dist && \\
 # Default command
 CMD ["node", "--version"]
 """
-                echo "Created sample Dockerfile"
-            }
+            echo "Created demo Dockerfile"
             
             // Create sample test script if using npm
             if (!fileExists('package.json')) {
@@ -82,7 +80,7 @@ console.log("All tests completed successfully!");
         stage("Build Application Image") {
             echo "Building Docker image: ${params.BUILD_IMAGE_NAME}"
             
-            buildImage = docker.build(params.BUILD_IMAGE_NAME, ".")
+            buildImage = docker.build(params.BUILD_IMAGE_NAME, "-f Dockerfile.demo .")
             
             echo "Docker image built successfully: ${params.BUILD_IMAGE_NAME}"
         }
