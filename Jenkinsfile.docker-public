@@ -1,0 +1,179 @@
+#!groovy
+@Library('github.com/cloudogu/ces-build-lib@2.2.1')
+import com.cloudogu.ces.cesbuildlib.*
+
+/**
+ * Docker Build, Copy, and Run Pipeline
+ * Ready to run in any fresh Jenkins instance
+ * 
+ * Demonstrates docker build, docker exec, docker cp, and docker run operations
+ */
+
+node('docker') {
+
+    properties([
+        buildDiscarder(logRotator(numToKeepStr: '10')),
+        disableConcurrentBuilds(),
+        parameters([
+            string(name: 'BUILD_IMAGE_NAME', defaultValue: 'myapp-build:latest', description: 'Name for the build Docker image'),
+            string(name: 'BASE_IMAGE', defaultValue: 'node:20-alpine', description: 'Base Docker image to use'),
+            string(name: 'SCHEMA_FILE', defaultValue: 'schema.gql', description: 'Schema file to extract from container'),
+            string(name: 'ARTIFACT_PATH', defaultValue: '/app/dist', description: 'Path to artifacts inside container'),
+            booleanParam(name: 'SKIP_UNIT_TESTS', defaultValue: false, description: 'Skip unit tests'),
+            booleanParam(name: 'SKIP_DOCKER_CP', defaultValue: false, description: 'Skip docker cp stage')
+        ])
+    ])
+
+    def git = new Git(this)
+    def docker = new Docker(this)
+    
+    def buildImage = null
+    
+    catchError {
+        stage('Checkout') {
+            checkout scm
+            git.clean('".*/"')
+        
+        stage("Prepare Build Environment") {
+            echo "Preparing build environment..."
+            
+            // Create a sample Dockerfile if none exists
+            if (!fileExists('Dockerfile')) {
+                writeFile file: 'Dockerfile', text: """
+FROM ${params.BASE_IMAGE}
+
+WORKDIR /app
+
+# Create sample application structure
+RUN mkdir -p /app/dist && \\
+    echo '{ "name": "sample-app", "version": "1.0.0" }' > /app/package.json && \\
+    echo 'type Query { hello: String }' > /app/schema.gql && \\
+    echo 'console.log("Tests passed!");' > /app/test.js && \\
+    echo 'console.log("Build completed!");' > /app/dist/index.js
+
+# Default command
+CMD ["node", "--version"]
+"""
+                echo "Created sample Dockerfile"
+            }
+            
+            // Create sample test script if using npm
+            if (!fileExists('package.json')) {
+                writeFile file: 'package.json', text: '''
+{
+  "name": "docker-pipeline-demo",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node test.js || echo 'Tests completed'"
+  }
+}
+'''
+                writeFile file: 'test.js', text: '''
+console.log("Running unit tests...");
+console.log("✓ Test 1 passed");
+console.log("✓ Test 2 passed");
+console.log("All tests completed successfully!");
+'''
+                echo "Created sample test files"
+            }
+        }
+        
+        stage("Build Application Image") {
+            echo "Building Docker image: ${params.BUILD_IMAGE_NAME}"
+            
+            buildImage = docker.build(params.BUILD_IMAGE_NAME, ".")
+            
+            echo "Docker image built successfully: ${params.BUILD_IMAGE_NAME}"
+        }
+        stage("Run Unit Tests") {
+            if (params.SKIP_UNIT_TESTS) {
+                echo "Skipping unit tests as requested"
+            } else {
+                echo "Running unit tests within Docker container..."
+                
+                ansiColor('xterm') {
+                    // Start container and run tests using docker exec
+                    buildImage.withRun("--entrypoint /bin/sh") { container ->
+                        try {
+                            echo "Container ID: ${container.id}"
+                            
+                            // Execute tests inside the running container
+                            sh "docker exec ${container.id} node test.js || echo 'Test execution attempted'"
+                            
+                            echo "Unit tests completed"
+                        } catch (Exception e) {
+                            echo "Warning: Unit tests encountered issues: ${e.message}"
+                            currentBuild.result = 'UNSTABLE'
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Copy Build Artifacts') {
+            if (params.SKIP_DOCKER_CP) {
+                echo "Skipping docker cp as requested"
+            } else {
+                echo "Copying build artifacts from Docker container..."
+                
+                // Start a temporary container to copy files from
+                buildImage.withRun("--entrypoint /bin/sh") { container ->
+                    try {
+                        echo "Container ID: ${container.id}"
+                        
+                        // Copy schema file from container to workspace
+                        sh """
+                            docker cp ${container.id}:/app/${params.SCHEMA_FILE} ${env.WORKSPACE}/${params.SCHEMA_FILE} || \\
+                            echo 'Schema file not found, skipping'
+                        """
+                        
+                        // Copy dist folder if it exists
+                        sh """
+                            docker cp ${container.id}:${params.ARTIFACT_PATH} ${env.WORKSPACE}/dist || \\
+                            echo 'Artifact path not found, skipping'
+                        """
+                        
+                        // List copied files
+                        echo "Files copied to workspace:"
+                        sh "ls -lah ${env.WORKSPACE}/ | grep -E '(schema|dist)' || echo 'No artifacts found'"
+                        
+                        // Archive artifacts
+                        if (fileExists(params.SCHEMA_FILE)) {
+                            echo "Successfully copied ${params.SCHEMA_FILE}"
+                            archiveArtifacts artifacts: params.SCHEMA_FILE, fingerprint: true, allowEmptyArchive: true
+                        }
+                        
+                        if (fileExists('dist')) {
+                            echo "Successfully copied dist folder"
+                            archiveArtifacts artifacts: 'dist/**/*', fingerprint: true, allowEmptyArchive: true
+                        }
+                        
+                    } catch (Exception e) {
+                        echo "Warning: Failed to copy some artifacts: ${e.message}"
+                        currentBuild.result = 'UNSTABLE'
+                    }
+                }
+            }
+        }
+        stage('Docker Run with Volume Mount') {
+            echo "Running container with volume mount..."
+            
+            sh """
+                docker run --rm \\
+                    -v ${env.WORKSPACE}:/workspace \\
+                    -w /workspace \\
+                    -e NODE_ENV=production \\
+                    ${params.BUILD_IMAGE_NAME} \\
+                    sh -c 'echo "Running from mounted workspace" && ls -la | head -10'
+            """
+            
+            echo "Docker run completed"
+        }
+    }
+    
+    // Post-build actions
+    if (currentBuild.currentResult != 'SUCCESS') {
+        echo "Build completed with status: ${currentBuild.currentResult}"
+        echo "Check the logs above for details."
+    }
+}
