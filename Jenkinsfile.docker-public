@@ -90,20 +90,18 @@ console.log("All tests completed successfully!");
             } else {
                 echo "Running unit tests within Docker container..."
                 
-                ansiColor('xterm') {
-                    // Start container and run tests using docker exec
-                    buildImage.withRun("--entrypoint /bin/sh") { container ->
-                        try {
-                            echo "Container ID: ${container.id}"
-                            
-                            // Execute tests inside the running container
-                            sh "docker exec ${container.id} node test.js || echo 'Test execution attempted'"
-                            
-                            echo "Unit tests completed"
-                        } catch (Exception e) {
-                            echo "Warning: Unit tests encountered issues: ${e.message}"
-                            currentBuild.result = 'UNSTABLE'
-                        }
+                // Start container and run tests using docker exec
+                buildImage.withRun("--entrypoint /bin/sh") { container ->
+                    try {
+                        echo "Container ID: ${container.id}"
+                        
+                        // Execute tests inside the running container
+                        sh "docker exec ${container.id} node test.js || echo 'Test execution attempted'"
+                        
+                        echo "Unit tests completed"
+                    } catch (Exception e) {
+                        echo "Warning: Unit tests encountered issues: ${e.message}"
+                        currentBuild.result = 'UNSTABLE'
                     }
                 }
             }
